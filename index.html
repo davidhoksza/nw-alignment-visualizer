@@ -1,0 +1,700 @@
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
+<title>Affine Gap Alignment Stepper</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@600&display=swap">
+<style>
+/* Layout: one working screen. Parameters and stepping controls on top; the step
+   explanation and the growing alignment side by side; then three parallel columns
+   (G | H | V), each a matrix with its own recurrence underneath. The three state
+   colours carry through cells, formulas and alignment columns. */
+:root {
+  --bg: #eef1f4;
+  --surface: #ffffff;
+  --surface-2: #f4f6f8;
+  --ink: #16202b;
+  --ink-2: #4a5968;
+  --ink-3: #6c7885;
+  --line: #d3dae1;
+  --line-2: #aeb9c4;
+  --g: #1f6fb5;  --g-soft: #dcebf8;
+  --h: #bf540b;  --h-soft: #fbe5d3;
+  --v: #157a65;  --v-soft: #d6efe8;
+  --on: #ffffff;
+  --sans: 'IBM Plex Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --cond: 'IBM Plex Sans Condensed', 'IBM Plex Sans', 'Arial Narrow', system-ui, sans-serif;
+  --mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f141a; --surface: #171e26; --surface-2: #1c242d;
+    --ink: #e7ecf1; --ink-2: #a9b5c1; --ink-3: #8090a0;
+    --line: #2a3541; --line-2: #445262;
+    --g: #62aee8; --g-soft: #173650;
+    --h: #f19a57; --h-soft: #4a2b14;
+    --v: #4cc4a4; --v-soft: #123c33;
+    --on: #0f141a;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f141a; --surface: #171e26; --surface-2: #1c242d;
+  --ink: #e7ecf1; --ink-2: #a9b5c1; --ink-3: #8090a0;
+  --line: #2a3541; --line-2: #445262;
+  --g: #62aee8; --g-soft: #173650;
+  --h: #f19a57; --h-soft: #4a2b14;
+  --v: #4cc4a4; --v-soft: #123c33;
+  --on: #0f141a;
+  color-scheme: dark;
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+body { background: var(--bg); color: var(--ink); font: 14px/1.5 var(--sans); }
+.app { max-width: 1240px; margin-inline: auto; padding-inline: 20px; padding-block: 22px 40px; display: flex; flex-direction: column; gap: 16px; }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+:focus-visible { outline: 2px solid var(--g); outline-offset: 2px; }
+
+/* --c: the colour of the matrix an element belongs to. --t: the colour of the matrix that is reading it. */
+.m-G { --c: var(--g); --c-soft: var(--g-soft); }
+.m-H { --c: var(--h); --c-soft: var(--h-soft); }
+.m-V { --c: var(--v); --c-soft: var(--v-soft); }
+.t-G { --t: var(--g); --t-soft: var(--g-soft); }
+.t-H { --t: var(--h); --t-soft: var(--h-soft); }
+.t-V { --t: var(--v); --t-soft: var(--v-soft); }
+.kG { color: var(--g); } .kH { color: var(--h); } .kV { color: var(--v); }
+b.kG, b.kH, b.kV { font-weight: 600; }
+
+/* header */
+.head { display: flex; flex-direction: column; gap: 4px; }
+h1 { margin: 0; font: 600 28px/1.15 var(--cond); text-wrap: balance; }
+.head p { margin: 0; color: var(--ink-2); max-width: 78ch; }
+
+/* parameters */
+.params { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px 24px; }
+.group { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px; }
+.field { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.field label, .eyebrow { font: 500 11px/1.3 var(--sans); letter-spacing: .07em; text-transform: uppercase; color: var(--ink-2); }
+input[type=text], input[type=number], select {
+  font: 500 14px/1.2 var(--mono); color: var(--ink); background: var(--surface);
+  border: 1px solid var(--line-2); border-radius: 3px; padding: 0 8px; height: 32px; max-width: 100%;
+}
+input.seq { width: 11.5em; text-transform: uppercase; letter-spacing: .12em; }
+input.num { width: 5.2em; }
+.fixed { font: 500 13px/32px var(--mono); height: 32px; white-space: nowrap; }
+select { font-family: var(--sans); font-size: 13px; padding-inline: 6px 2px; }
+
+.btn {
+  font: 500 13px/1 var(--sans); color: var(--ink); background: var(--surface);
+  border: 1px solid var(--line-2); border-radius: 3px; height: 32px; padding: 0 12px;
+  cursor: pointer; white-space: nowrap;
+}
+.btn:hover:not(:disabled) { background: var(--surface-2); border-color: var(--ink-2); }
+.btn:disabled { opacity: .45; cursor: default; }
+.btn.strong { background: var(--ink); border-color: var(--ink); color: var(--bg); }
+.btn.strong:hover:not(:disabled) { background: var(--ink-2); border-color: var(--ink-2); }
+
+/* stepping controls */
+.bar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; background: var(--surface); border: 1px solid var(--line); border-radius: 4px; padding: 10px 12px; }
+.btns { display: flex; flex-wrap: wrap; gap: 6px; }
+.phases { display: flex; flex-wrap: wrap; }
+.ph { font: 500 12.5px/1 var(--sans); height: 32px; padding: 0 10px; color: var(--ink-2); background: transparent; border: 1px solid var(--line-2); margin-left: -1px; cursor: pointer; white-space: nowrap; }
+.ph:first-child { margin-left: 0; border-radius: 3px 0 0 3px; }
+.ph:last-child { border-radius: 0 3px 3px 0; }
+.ph i { font-style: normal; font-family: var(--mono); margin-right: 6px; opacity: .7; }
+.ph[aria-current=step] { background: var(--ink); border-color: var(--ink); color: var(--bg); }
+.ph:disabled { opacity: .45; cursor: default; }
+#scrub { flex: 1 1 180px; min-width: 120px; accent-color: var(--ink); margin: 0; }
+.count { font: 500 12.5px/1 var(--mono); color: var(--ink-2); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.field.inline { flex-direction: row; align-items: center; gap: 6px; }
+.hint { margin: 0; color: var(--ink-2); font-size: 12.5px; }
+kbd { font: 500 11.5px/1.4 var(--mono); border: 1px solid var(--line-2); border-radius: 3px; padding: 0 4px; background: var(--surface); }
+
+/* explanation + alignment */
+.top { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); gap: 16px; }
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: 4px; padding: 14px 16px; min-width: 0; }
+.say { min-height: 10.5em; }
+.say p { margin: 6px 0 0; font-size: 15px; line-height: 1.5; max-width: 70ch; }
+.q { font-family: var(--mono); font-size: .93em; white-space: nowrap; }
+.aln-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
+.score { font: 500 11px/1 var(--sans); letter-spacing: .07em; text-transform: uppercase; color: var(--ink-2); }
+.score b { font: 600 22px/1 var(--cond); color: var(--ink); letter-spacing: 0; margin-left: 6px; }
+.aln-wait { margin: 8px 0 0; color: var(--ink-2); }
+.aln-scroll { overflow-x: auto; margin-top: 6px; }
+.aln { border-collapse: separate; border-spacing: 3px 2px; font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.aln th { font: 500 10.5px/1 var(--sans); letter-spacing: .07em; text-transform: uppercase; color: var(--ink-2); text-align: right; padding-right: 8px; white-space: nowrap; }
+.aln td { min-width: 30px; height: 22px; text-align: center; font-size: 12px; color: var(--ink-2); padding: 0 2px; border-radius: 2px; }
+.aln .seq td { height: 30px; font-size: 16px; font-weight: 600; color: var(--ink); }
+.aln .seq td.on { background: var(--c-soft); }
+.aln .seq td.todo { box-shadow: inset 0 -2px 0 var(--line); }
+.aln .seq td.now { box-shadow: inset 0 0 0 2px var(--c); }
+.aln td.sum { text-align: left; padding-left: 6px; color: var(--ink); font-weight: 600; white-space: nowrap; }
+
+/* matrix columns */
+.cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 330px), 1fr)); gap: 16px; align-items: start; }
+.col { background: var(--surface); border: 1px solid var(--line); border-radius: 4px; min-width: 0; }
+.col-head { display: flex; align-items: baseline; gap: 10px; padding: 12px 14px 8px; }
+.letter { font: 600 30px/1 var(--cond); color: var(--c); }
+.dir { font: 500 18px/1 var(--mono); color: var(--c); }
+.what { color: var(--ink-2); font-size: 13px; line-height: 1.35; }
+.mx-wrap { overflow-x: auto; padding: 0 14px 14px; }
+.mx { border-collapse: collapse; font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.mx th { font-weight: 600; font-size: 14px; line-height: 1; color: var(--ink); min-width: 40px; height: 36px; padding: 2px; text-align: center; white-space: nowrap; }
+.mx th .ix { font-weight: 400; font-size: 9.5px; color: var(--ink-3); }
+.mx thead th span { display: block; }
+.mx thead th .ix { margin-bottom: 3px; }
+.mx tbody th { text-align: right; padding-right: 8px; }
+.mx tbody th .ix { margin-right: 6px; }
+.mx th.corner span { font: 400 9.5px/1.35 var(--sans); color: var(--ink-3); }
+.mx th.hl { background: var(--ink); color: var(--bg); }
+.mx th.hl .ix { color: inherit; opacity: .75; }
+
+.c { position: relative; min-width: 40px; height: 38px; padding: 9px 3px 0; text-align: center; border: 1px solid var(--line); background: var(--surface); color: var(--ink); font-size: 13px; font-weight: 500; line-height: 1; cursor: pointer; }
+.c .val { display: inline-block; }
+.c.empty { background: var(--surface-2); }
+.c.empty::after { content: '·'; color: var(--line-2); }
+.c.ninf { color: var(--ink-3); font-weight: 400; }
+.ptr { position: absolute; top: 2px; right: 3px; font: 600 8.5px/1 var(--sans); font-style: normal; letter-spacing: .03em; }
+.c.path { background: var(--c-soft); }
+.c.src { box-shadow: inset 0 0 0 2px var(--t); }
+.c.src.win { background: var(--t-soft); box-shadow: inset 0 0 0 3px var(--t); font-weight: 600; }
+.c.tgt { background: var(--c); box-shadow: inset 0 0 0 1px var(--c); color: var(--on); font-weight: 600; }
+.c.tgt .ptr b { color: var(--on); }
+/* a value computed in this step that another matrix reads in the same step */
+.c.tgt.src { background: var(--c); box-shadow: inset 0 0 0 2px var(--t); }
+.c.tgt.src.win { background: var(--c); box-shadow: inset 0 0 0 4px var(--t); }
+
+/* recurrence under each matrix */
+.rec { border-top: 1px solid var(--line); padding: 10px 14px 12px; font: 12.5px/1.4 var(--mono); font-variant-numeric: tabular-nums; }
+.rec-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin-bottom: 4px; min-height: 24px; }
+.res { font-size: 16px; font-weight: 600; color: var(--c); }
+.cand { display: grid; grid-template-columns: 7.4em 6.4em minmax(0, 1fr) 2.2em; column-gap: 4px; align-items: baseline; padding: 3px 6px; margin-inline: -6px; border-radius: 2px; color: var(--ink-2); }
+.rec.live .cand { color: var(--ink); }
+.cand.win { background: var(--c-soft); font-weight: 600; }
+.cand .num { white-space: nowrap; }
+.cand .tag { font: 600 10px/1 var(--sans); letter-spacing: .07em; text-transform: uppercase; color: var(--c); text-align: right; }
+.note { margin: 6px 0 0; font: 12.5px/1.45 var(--sans); color: var(--ink-2); }
+
+@media (max-width: 860px) {
+  .top { grid-template-columns: minmax(0, 1fr); }
+  .say { min-height: 0; }
+}
+@media (max-width: 520px) {
+  .app { padding-inline: 16px; }
+  h1 { font-size: 24px; }
+  #scrub { flex-basis: 100%; }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .c.tgt .val { animation: pop .18s ease-out; }
+}
+@keyframes pop { from { transform: scale(.7); } to { transform: none; } }
+</style>
+
+<div class="app">
+  <header class="head">
+    <h1>Global alignment with affine gaps</h1>
+    <p>Needleman–Wunsch with three matrices. <b class="kG">G</b> holds the best score for each pair of prefixes, <b class="kH">H</b> the best that ends with a horizontal move (a letter of S1 faces a gap) and <b class="kV">V</b> the best that ends with a vertical move (a letter of S2 faces a gap). Step through the fill and the traceback and watch where every value comes from.</p>
+  </header>
+
+  <form id="params" class="params" autocomplete="off">
+    <div class="group" role="group" aria-label="Sequences">
+      <div class="field"><label for="seq1">S1 · horizontal</label><input id="seq1" class="seq" type="text" value="ABBDD" maxlength="14" spellcheck="false" autocapitalize="characters"></div>
+      <div class="field"><label for="seq2">S2 · vertical</label><input id="seq2" class="seq" type="text" value="ABD" maxlength="14" spellcheck="false" autocapitalize="characters"></div>
+    </div>
+    <div class="group" role="group" aria-label="Scores">
+      <div class="field"><label for="match">Match</label><input id="match" class="num" type="number" step="1" value="2"></div>
+      <div class="field"><label for="mismatch">Mismatch</label><input id="mismatch" class="num" type="number" step="1" value="0"></div>
+      <div class="field"><label for="open">Gap open</label><input id="open" class="num" type="number" step="1" value="-2"></div>
+      <div class="field"><label for="ext">Gap extend</label><input id="ext" class="num" type="number" step="1" value="-1"></div>
+    </div>
+    <div class="group" role="group" aria-label="Gap cost">
+      <div class="field"><span class="eyebrow">Gap of length k costs</span><span class="fixed">open + (k−1)·extend</span></div>
+    </div>
+    <button type="button" id="reset" class="btn">Reset to defaults</button>
+  </form>
+
+  <section class="bar" aria-label="Stepping controls">
+    <div class="btns">
+      <button id="first" class="btn" type="button">Start</button>
+      <button id="back" class="btn" type="button">‹ Back</button>
+      <button id="next" class="btn strong" type="button">Next ›</button>
+      <button id="last" class="btn" type="button">End</button>
+      <button id="play" class="btn" type="button" aria-pressed="false">Play</button>
+    </div>
+    <div class="phases" role="group" aria-label="Jump to phase">
+      <button class="ph" type="button" data-ph="init"><i>1</i>Initialise</button>
+      <button class="ph" type="button" data-ph="fill"><i>2</i>Fill</button>
+      <button class="ph" type="button" data-ph="score"><i>3</i>Score</button>
+      <button class="ph" type="button" data-ph="trace"><i>4</i>Traceback</button>
+    </div>
+    <input id="scrub" type="range" min="0" max="0" value="0" step="1" aria-label="Step">
+    <output id="count" class="count" for="scrub"></output>
+    <div class="field inline"><label for="mode">Each step fills</label>
+      <select id="mode"><option value="value" selected>one value</option><option value="cell">one cell (H, V, G)</option></select>
+    </div>
+    <div class="field inline"><label for="speed">Play speed</label>
+      <select id="speed"><option value="1300">slow</option><option value="700" selected>medium</option><option value="280">fast</option></select>
+    </div>
+  </section>
+
+  <div class="top">
+    <section id="say" class="panel say" aria-live="polite"></section>
+    <section id="aln" class="panel" aria-label="Alignment"></section>
+  </div>
+
+  <div class="cols" id="cols">
+    <section class="col m-G">
+      <div class="col-head"><span class="letter">G</span><span class="dir" aria-hidden="true">↘</span><span class="what">best overall: H, V, or the diagonal plus the letter score</span></div>
+      <div class="mx-wrap" id="mx-G"></div>
+      <div id="rec-G"></div>
+    </section>
+    <section class="col m-H">
+      <div class="col-head"><span class="letter">H</span><span class="dir" aria-hidden="true">→</span><span class="what">horizontal move, reads the cell to the left: S1[j] faces a gap</span></div>
+      <div class="mx-wrap" id="mx-H"></div>
+      <div id="rec-H"></div>
+    </section>
+    <section class="col m-V">
+      <div class="col-head"><span class="letter">V</span><span class="dir" aria-hidden="true">↓</span><span class="what">vertical move, reads the cell above: S2[i] faces a gap</span></div>
+      <div class="mx-wrap" id="mx-V"></div>
+      <div id="rec-V"></div>
+    </section>
+  </div>
+
+  <p class="hint">In every cell H and V are computed first, then G. Click any cell to jump to the step that computed it. The small letter in a cell's corner names the matrix its value came from. Keys: <kbd>←</kbd> <kbd>→</kbd> step, <kbd>Space</kbd> play or pause, <kbd>Home</kbd> and <kbd>End</kbd> jump.</p>
+</div>
+
+<script>
+(() => {
+'use strict';
+
+const MATS = ['G', 'H', 'V'];   // display order, and the order in which ties are broken
+const FILL = ['H', 'V', 'G'];   // order of computation inside one cell: G needs H[i,j] and V[i,j]
+const DEF = { s1: 'ABBDD', s2: 'ABD', match: 2, mismatch: 0, open: -2, ext: -1 };
+const NUMS = ['match', 'mismatch', 'open', 'ext'];
+const $ = id => document.getElementById(id);
+
+const state = { P: { ...DEF }, mode: 'value', step: 0, playing: false, speed: 700 };
+let R = null, steps = [], timer = null;
+
+/* ---------- formatting ---------- */
+const fmt = x => x === -Infinity ? '−∞' : x === Infinity ? '∞' : String(Math.round(x * 100) / 100).replace('-', '−');
+const sg = x => (x > 0 ? '+' : '') + fmt(x);
+const esc = s => String(s).replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
+const ref = (K, i, j) => `<span class="q"><b class="k${K}">${K}</b>[${i},${j}]</span>`;
+const calc = x => x.base === -Infinity ? '−∞' : `${fmt(x.base)} ${x.add < 0 ? '−' : '+'} ${fmt(Math.abs(x.add))} = ${fmt(x.total)}`;
+
+/* ---------- the algorithm ---------- */
+// S1 runs along the columns (index j), S2 along the rows (index i).
+//   H[i,j] = max( G[i,j-1] + open, H[i,j-1] + extend )      horizontal move, S1[j] faces a gap
+//   V[i,j] = max( G[i-1,j] + open, V[i-1,j] + extend )      vertical move, S2[i] faces a gap
+//   G[i,j] = max( H[i,j], V[i,j], G[i-1,j-1] + s )          best overall
+// Row 0 and column 0 are set by formula (one gap of length k); the recurrences fill the rest.
+function solve(P) {
+  const s1 = P.s1, s2 = P.s2, n = s1.length, m = s2.length;
+  const openCost = P.open;   // a gap of length k costs open + (k-1)·extend, so its first position costs just "open"
+  const openLabel = 'open';
+  // Cost of one gap of length k.
+  const gap = k => k === 0 ? -Infinity : P.open + (k - 1) * P.ext;   // k = 0 is only the unused corner of H and V
+  const val = {}, comp = {};
+  for (const K of MATS) {
+    val[K] = []; comp[K] = [];
+    for (let i = 0; i <= m; i++) { val[K].push(new Array(n + 1).fill(-Infinity)); comp[K].push(new Array(n + 1).fill(null)); }
+  }
+  for (let i = 0; i <= m; i++) for (let j = 0; j <= n; j++) for (const K of FILL) {
+    const c = { K, i, j, cands: [], wins: [], pick: null, value: -Infinity, origin: false, init: false };
+    const cand = (F, si, sj, add, label, copy) => {
+      const base = val[F][si][sj];
+      c.cands.push({ F, si, sj, base, add, label, copy: !!copy, total: base + add });
+    };
+    if (i === 0 || j === 0) {
+      // Border: set by formula, not by the recurrences. A cell k steps from the corner is one gap of length k,
+      // in all three matrices. H reads its first column, V its first row.
+      const k = i + j, run = i === 0 ? 'H' : 'V';
+      c.init = true;
+      if (k === 0) { c.value = K === 'G' ? 0 : gap(0); c.origin = K === 'G'; }
+      else {
+        c.value = gap(k);
+        // Where the traceback goes from a border cell: row 0 is a run of horizontal moves, column 0 of vertical ones.
+        const push = (F, si, sj, base, add, label, copy) => c.cands.push({ F, si, sj, base, add, label, copy: !!copy, total: base + add });
+        if (K !== run) push(run, i, j, gap(k), 0, '', true);
+        else if (k === 1) push('G', 0, 0, 0, openCost, openLabel);
+        else push(run, i === 0 ? 0 : i - 1, i === 0 ? j - 1 : 0, gap(k - 1), P.ext, 'extend');
+        c.wins = c.cands.slice(); c.pick = c.cands[0];
+      }
+    } else if (K === 'H') {
+      if (j > 0) { cand('G', i, j - 1, openCost, openLabel); cand('H', i, j - 1, P.ext, 'extend'); }
+    } else if (K === 'V') {
+      if (i > 0) { cand('G', i - 1, j, openCost, openLabel); cand('V', i - 1, j, P.ext, 'extend'); }
+    } else if (i === 0 && j === 0) {
+      c.value = 0; c.origin = true;
+    } else {
+      cand('H', i, j, 0, '', true);
+      cand('V', i, j, 0, '', true);
+      if (i > 0 && j > 0) { const eq = s1[j - 1] === s2[i - 1]; cand('G', i - 1, j - 1, eq ? P.match : P.mismatch, eq ? 'match' : 'mismatch'); }
+    }
+    if (c.cands.length && !c.init) {
+      c.value = Math.max(...c.cands.map(x => x.total));
+      if (c.value > -Infinity) {
+        c.wins = c.cands.filter(x => x.total === c.value);
+        c.pick = MATS.map(F => c.wins.find(x => x.F === F)).find(Boolean);   // ties: G, then H, then V
+      }
+    }
+    val[K][i][j] = c.value; comp[K][i][j] = c;
+  }
+  // Traceback from G[m,n]. A G cell that copied H or V hands over to that matrix in the same cell.
+  const score = val.G[m][n];
+  const nodes = [];
+  let cur = { K: 'G', i: m, j: n };
+  for (let guard = 0; guard < 100000; guard++) {
+    nodes.push(cur);
+    const c = comp[cur.K][cur.i][cur.j];
+    if (c.origin || !c.pick) break;
+    cur = { K: c.pick.F, i: c.pick.si, j: c.pick.sj };
+  }
+  const cols = [], shownAt = [];
+  nodes.forEach(nd => {
+    const c = comp[nd.K][nd.i][nd.j];
+    const emits = !!c.pick && !c.pick.copy;
+    if (emits) cols.push({ K: nd.K, a: nd.K === 'V' ? '–' : s1[nd.j - 1], b: nd.K === 'H' ? '–' : s2[nd.i - 1], d: c.pick.add });
+    nd.col = emits ? cols.length - 1 : -1;
+    shownAt.push(cols.length);
+  });
+  return { P: { ...P }, s1, s2, m, n, val, comp, score, nodes, cols, shownAt, openCost, openLabel };
+}
+
+/* ---------- steps ---------- */
+function buildSteps() {
+  const { m, n } = R;
+  steps = [{ phase: 'init', count: 0 }];
+  let count = 0;
+  for (let i = 1; i <= m; i++) for (let j = 1; j <= n; j++) {
+    if (state.mode === 'cell') { count += 3; steps.push({ phase: 'fill', i, j, mats: FILL, count }); }
+    else for (const K of FILL) { count++; steps.push({ phase: 'fill', i, j, mats: [K], count }); }
+  }
+  steps.push({ phase: 'score', count });
+  R.nodes.forEach((nd, k) => steps.push({ phase: 'trace', k, count }));
+}
+const ordinal = (K, i, j) => ((i - 1) * R.n + (j - 1)) * 3 + FILL.indexOf(K);
+const isFilled = (K, i, j, st) => i === 0 || j === 0 || ordinal(K, i, j) < st.count;
+function stepFor(K, i, j) {
+  if (i === 0 || j === 0) return 0;
+  const o = ordinal(K, i, j);
+  return 1 + (state.mode === 'cell' ? Math.floor(o / 3) : o);
+}
+
+/* ---------- what to highlight at a step ---------- */
+function highlights(st) {
+  const map = new Map(), active = [];
+  let focus = null;
+  const { m, n } = R;
+  const add = (K, i, j, cls) => { const k = K + i + '_' + j; map.set(k, (map.get(k) || '') + ' ' + cls); };
+  const mark = (c, pickOnly) => {
+    add(c.K, c.i, c.j, 'tgt');
+    c.cands.forEach(x => {
+      const win = pickOnly ? x === c.pick : c.wins.includes(x);
+      add(x.F, x.si, x.sj, 'src t-' + c.K + (win ? ' win' : ''));
+    });
+    active.push(c);
+  };
+  if (st.phase === 'fill') {
+    st.mats.forEach(K => mark(R.comp[K][st.i][st.j], false));
+    focus = { i: st.i, j: st.j };
+  } else if (st.phase === 'score') {
+    add('G', m, n, 'tgt');
+    focus = { i: m, j: n };
+  } else if (st.phase === 'trace') {
+    for (let q = 0; q < st.k; q++) { const p = R.nodes[q]; add(p.K, p.i, p.j, 'path'); }
+    const nd = R.nodes[st.k], c = R.comp[nd.K][nd.i][nd.j];
+    if (c.origin || !c.pick) add(nd.K, nd.i, nd.j, 'tgt'); else mark(c, true);
+    focus = { i: nd.i, j: nd.j };
+  }
+  return { map, active, focus };
+}
+
+/* ---------- rendering ---------- */
+function matrixHTML(K, st, H) {
+  const { s1, s2, m, n } = R, f = H.focus;
+  let h = `<table class="mx"><caption class="sr">Matrix ${K}</caption><thead><tr><th class="corner"><span>S1 →</span><span>S2 ↓</span></th>`;
+  for (let j = 0; j <= n; j++) {
+    h += `<th scope="col"${f && f.j === j ? ' class="hl"' : ''}><span class="ix">${j}</span><span class="ch">${j ? esc(s1[j - 1]) : '&nbsp;'}</span></th>`;
+  }
+  h += '</tr></thead><tbody>';
+  for (let i = 0; i <= m; i++) {
+    h += `<tr><th scope="row"${f && f.i === i ? ' class="hl"' : ''}><span class="ix">${i}</span><span class="ch">${i ? esc(s2[i - 1]) : '&nbsp;'}</span></th>`;
+    for (let j = 0; j <= n; j++) {
+      const filled = isFilled(K, i, j, st), v = R.val[K][i][j], c = R.comp[K][i][j];
+      const cls = 'c' + (filled ? (v === -Infinity ? ' ninf' : '') : ' empty') + (H.map.get(K + i + '_' + j) || '');
+      let inner = '';
+      if (filled) {
+        inner = `<span class="val">${fmt(v)}</span>`;
+        if (c.wins.length && !c.init) inner += `<i class="ptr">${c.wins.map(w => `<b class="k${w.F}">${w.F}</b>`).join('')}</i>`;
+      }
+      const tip = filled ? `${K}[${i},${j}] = ${fmt(v)}` : `${K}[${i},${j}] is not computed yet`;
+      h += `<td class="${cls}" data-k="${K}" data-i="${i}" data-j="${j}" title="${tip}">${inner}</td>`;
+    }
+    h += '</tr>';
+  }
+  return h + '</tbody></table>';
+}
+
+const SYM = {
+  G: [['H', 'i,j', ''], ['V', 'i,j', ''], ['G', 'i−1,j−1', '+ s']],
+  H: [['G', 'i,j−1', '+ OPEN'], ['H', 'i,j−1', '+ extend']],
+  V: [['G', 'i−1,j', '+ OPEN'], ['V', 'i−1,j', '+ extend']]
+};
+
+function recHTML(K, c) {
+  const P = R.P;
+  let head, rows, note;
+  if (c && c.cands.length) {
+    head = `<span>${ref(K, c.i, c.j)} = ${c.init ? 'border value' : 'max of'}</span><b class="res">${fmt(c.value)}</b>`;
+    rows = c.cands.map(x => {
+      const win = c.wins.includes(x);
+      return `<div class="cand${win ? ' win' : ''}"><span><b class="k${x.F}">${x.F}</b>[${x.si},${x.sj}]</span><span>${x.copy ? '' : '+ ' + x.label}</span>` +
+        `<span class="num">${x.copy ? fmt(x.base) : calc(x)}</span><span class="tag">${win && !c.init ? 'max' : ''}</span></div>`;
+    }).join('');
+  } else {
+    c = null;
+    head = `<span><span class="q"><b class="k${K}">${K}</b>[i,j]</span> = max of</span>`;
+    rows = SYM[K].map(([F, idx, add]) =>
+      `<div class="cand"><span><b class="k${F}">${F}</b>[${idx}]</span><span>${add.replace('OPEN', R.openLabel)}</span><span class="num"></span><span class="tag"></span></div>`
+    ).join('');
+  }
+  if (K === 'G') {
+    const d = c && c.cands.find(x => x.F === 'G');
+    note = !c ? `s is match (${fmt(P.match)}) when S1[j] = S2[i], otherwise mismatch (${fmt(P.mismatch)}).`
+      : d ? `S1[${c.j}] = ${esc(R.s1[c.j - 1])} and S2[${c.i}] = ${esc(R.s2[c.i - 1])}: ${d.label}, so s = ${fmt(d.add)}.`
+      : 'A border cell has no diagonal neighbour, so only H and V compete.';
+  } else {
+    note = `${R.openLabel} = ${fmt(R.openCost)}, extend = ${fmt(P.ext)}.`;
+  }
+  if (c && c.init) note = `Set at initialisation: one gap of length ${c.i + c.j}. The row above shows where the traceback continues.`;
+  return `<div class="rec${c ? ' live' : ''}"><div class="rec-head">${head}</div>${rows}<p class="note">${note}</p></div>`;
+}
+
+function sayHTML(st) {
+  const { s1, s2, m, n, P, comp, val } = R;
+  const eb = t => `<div class="eyebrow">${t}</div>`;
+  const from = c => c.wins.map(w => ref(w.F, w.si, w.sj)).join(' and ') + (c.wins.length > 1 ? ' (a tie)' : '');
+
+  if (st.phase === 'init') {
+    const f = 'open + (k−1)·extend';
+    return eb('1 · Initialise') +
+      `<p>Row 0 and column 0 are set before any letters are compared. ${ref('G', 0, 0)} = 0 is the empty alignment. ` +
+      `A border cell k steps from the corner stands for one gap of length k, so it is set to <span class="q">${f}</span>. ` +
+      `<b class="kG">G</b> holds these values along its first row and first column. <b class="kH">H</b> reads them from its first column ` +
+      `and <b class="kV">V</b> from its first row; H’s first row and V’s first column hold the same values. ` +
+      `The corner cells of H and V are never read.</p>`;
+  }
+
+  if (st.phase === 'fill') {
+    const { i, j } = st;
+    const a = esc(s1[j - 1]), b = esc(s2[i - 1]);
+    const pa = `<span class="q">${esc(s1.slice(0, j))}</span>`, pb = `<span class="q">${esc(s2.slice(0, i))}</span>`;
+    const head = eb(`2 · Fill — row ${i} (${b}), column ${j} (${a})`);
+    const d = comp.G[i][j].cands.find(x => x.F === 'G');
+    if (st.mats.length === 3) {
+      return head + `<p>Cell [${i},${j}] compares ${pa} with ${pb}. <b class="kH">H</b> reads the left neighbour [${i},${j - 1}] and ` +
+        `<b class="kV">V</b> the upper one [${i - 1},${j}], each in G and in its own matrix. <b class="kG">G</b> then takes the best of ` +
+        `${ref('H', i, j)}, ${ref('V', i, j)} and the diagonal ${ref('G', i - 1, j - 1)} plus the ${d.label} score (${sg(d.add)}). ` +
+        `Results: ${FILL.map(K => `${ref(K, i, j)} = <b>${fmt(val[K][i][j])}</b>`).join(', ')}.</p>`;
+    }
+    const K = st.mats[0], c = comp[K][i][j];
+    let body;
+    if (K === 'G') {
+      body = `${ref('G', i, j)} is the best score for ${pa} against ${pb}, whatever the alignment ends with. ` +
+        `It is the largest of the two gap endings just computed, ${ref('H', i, j)} and ${ref('V', i, j)}, and the diagonal: ` +
+        `${a} and ${b} ${d.label === 'match' ? 'match' : 'differ'}, so ${sg(d.add)} is added to ${ref('G', i - 1, j - 1)}.`;
+    } else {
+      const own = K === 'H' ? `S1’s last letter ${a}` : `S2’s last letter ${b}`;
+      body = `${ref(K, i, j)} scores ${pa} against ${pb} with ${own} facing a gap. ` +
+        `Arriving from G opens a gap (${sg(R.openCost)}); arriving from ${K} extends one (${sg(P.ext)}).`;
+    }
+    const out = c.wins.length ? ` Result: <b>${fmt(c.value)}</b>, from ${from(c)}.` : ' No alignment can end this way, so the value stays −∞.';
+    return head + `<p>${body}${out}</p>`;
+  }
+
+  if (st.phase === 'score') {
+    return eb('3 · Score') +
+      `<p>Every cell is filled. ${ref('G', m, n)} already holds the best of all three ways an alignment can end, ` +
+      `so the score of the best global alignment is <b>${fmt(R.score)}</b>. The traceback starts in that cell.</p>`;
+  }
+
+  const nd = R.nodes[st.k], c = comp[nd.K][nd.i][nd.j];
+  const head = eb(`4 · Traceback — step ${st.k + 1} of ${R.nodes.length}`);
+  if (c.origin || !c.pick) {
+    return head + `<p>${ref('G', 0, 0)} is reached, so the traceback is done. Read left to right, the columns give an optimal alignment with score <b>${fmt(R.score)}</b>.</p>`;
+  }
+  const w = c.pick, tie = c.wins.length > 1 ? ' That was a tie; the order G, H, V decides.' : '';
+  let text;
+  if (nd.K === 'G' && w.copy) {
+    text = `${ref('G', nd.i, nd.j)} took its value from ${ref(w.F, w.si, w.sj)}, so the best alignment of these prefixes ends with a gap. ` +
+      `The path switches to matrix <b class="k${w.F}">${w.F}</b> in the same cell; no column is written yet.`;
+  } else if (w.copy) {
+    text = `${ref(nd.K, nd.i, nd.j)} is a border value, and the gap behind it runs along the border. ` +
+      `The path switches to matrix <b class="k${w.F}">${w.F}</b> in the same cell; no column is written yet.`;
+  } else if (nd.K === 'G') {
+    text = `${ref('G', nd.i, nd.j)} pairs ${esc(s1[nd.j - 1])} with ${esc(s2[nd.i - 1])} (${w.label}, ${sg(w.add)}). ` +
+      `Its value came from ${ref('G', w.si, w.sj)}, so the path moves there.`;
+  } else {
+    const what = nd.K === 'H'
+      ? `${ref('H', nd.i, nd.j)} puts S1’s ${esc(s1[nd.j - 1])} against a gap.`
+      : `${ref('V', nd.i, nd.j)} puts S2’s ${esc(s2[nd.i - 1])} against a gap.`;
+    const why = w.F === nd.K ? ', which extends the gap' : ', where the gap opens';
+    text = `${what} Its value came from ${ref(w.F, w.si, w.sj)}${why}, so the path moves there.`;
+  }
+  return head + `<p>${text}${tie}</p>`;
+}
+
+function alignHTML(st) {
+  const L = R.cols.length;
+  const known = st.phase === 'score' || st.phase === 'trace';
+  const head = `<div class="aln-head"><span class="eyebrow">Alignment</span><span class="score">Score <b>${known ? fmt(R.score) : '?'}</b></span></div>`;
+  if (st.phase !== 'trace') {
+    return head + `<p class="aln-wait">${known
+      ? 'The traceback builds it next, one column at a time, from the right.'
+      : 'Built by the traceback, one column at a time from the right, once the matrices are full.'}</p>`;
+  }
+  if (!L) return head + '<p class="aln-wait">Both sequences are empty, so there is nothing to align.</p>';
+  const shown = R.shownAt[st.k], now = R.nodes[st.k].col, done = st.k === R.nodes.length - 1;
+  const order = []; for (let d = 0; d < L; d++) order.push(L - 1 - d);
+  const row = (label, cls, fn, sum) => `<tr class="${cls}"><th scope="row">${label}</th>` + order.map(k => {
+    const on = k < shown, col = R.cols[k];
+    return `<td class="${on ? 'on m-' + col.K : 'todo'}${on && k === now ? ' now' : ''}">${on ? fn(col) : ''}</td>`;
+  }).join('') + `<td class="sum">${sum || ''}</td></tr>`;
+  return head + '<div class="aln-scroll"><table class="aln">' +
+    row('matrix', 'via', col => `<b class="k${col.K}">${col.K}</b>`) +
+    row('S1', 'seq', col => esc(col.a)) +
+    row('', 'mk', col => col.K === 'G' ? (col.a === col.b ? '|' : '·') : '') +
+    row('S2', 'seq', col => esc(col.b)) +
+    row('score', 'pts', col => sg(col.d), done ? '= ' + fmt(R.score) : '') +
+    '</table></div>';
+}
+
+function render() {
+  const st = steps[state.step], H = highlights(st);
+  $('say').innerHTML = sayHTML(st);
+  $('aln').innerHTML = alignHTML(st);
+  for (const K of MATS) {
+    const w = $('mx-' + K), x = w.scrollLeft;
+    w.innerHTML = matrixHTML(K, st, H);
+    w.scrollLeft = x;
+    $('rec-' + K).innerHTML = recHTML(K, H.active.find(c => c.K === K) || null);
+  }
+  const last = steps.length - 1;
+  $('first').disabled = $('back').disabled = state.step === 0;
+  $('next').disabled = $('last').disabled = state.step === last;
+  const sc = $('scrub'); sc.max = last; sc.value = state.step;
+  $('count').textContent = `Step ${state.step + 1} of ${steps.length}`;
+  document.querySelectorAll('.ph').forEach(b => {
+    const ph = b.dataset.ph;
+    b.disabled = !steps.some(s => s.phase === ph);
+    if (ph === st.phase) b.setAttribute('aria-current', 'step'); else b.removeAttribute('aria-current');
+  });
+}
+
+/* ---------- state changes ---------- */
+function rebuild(keep) {
+  const old = steps[state.step];
+  R = solve(state.P);
+  buildSteps();
+  let s = 0;
+  if (keep && old) {
+    if (old.phase === 'fill') s = steps.findIndex(x => x.phase === 'fill' && x.count >= old.count);
+    else if (old.phase === 'score') s = steps.findIndex(x => x.phase === 'score');
+    else if (old.phase === 'trace') s = Math.min(steps.findIndex(x => x.phase === 'trace') + old.k, steps.length - 1);
+  }
+  state.step = Math.max(0, s);
+  render();
+}
+
+function setPlaying(on) {
+  clearInterval(timer);
+  state.playing = on;
+  if (on) {
+    if (state.step >= steps.length - 1) { state.step = 0; render(); }
+    timer = setInterval(() => {
+      if (state.step >= steps.length - 1) { setPlaying(false); return; }
+      state.step++; render();
+      if (state.step >= steps.length - 1) setPlaying(false);
+    }, state.speed);
+  }
+  $('play').textContent = on ? 'Pause' : 'Play';
+  $('play').setAttribute('aria-pressed', String(on));
+}
+
+function go(s) {
+  setPlaying(false);
+  state.step = Math.max(0, Math.min(steps.length - 1, s));
+  render();
+}
+
+function readParams() {
+  const P = state.P;
+  P.s1 = $('seq1').value.replace(/\s+/g, '').toUpperCase().slice(0, 14);
+  P.s2 = $('seq2').value.replace(/\s+/g, '').toUpperCase().slice(0, 14);
+  for (const k of NUMS) {
+    const raw = $(k).value.trim();
+    if (raw !== '' && Number.isFinite(+raw)) P[k] = +raw;
+  }
+}
+
+/* ---------- wiring ---------- */
+$('params').addEventListener('submit', e => e.preventDefault());
+$('params').addEventListener('input', () => {
+  const a = state.P.s1, b = state.P.s2;
+  setPlaying(false);
+  readParams();
+  rebuild(a === state.P.s1 && b === state.P.s2);
+});
+$('params').addEventListener('change', e => {
+  // A number field left empty or half-typed goes back to the value in use.
+  if (NUMS.includes(e.target.id)) {
+    const raw = e.target.value.trim();
+    if (raw === '' || !Number.isFinite(+raw)) e.target.value = state.P[e.target.id];
+  }
+});
+$('reset').addEventListener('click', () => {
+  setPlaying(false);
+  $('seq1').value = DEF.s1; $('seq2').value = DEF.s2;
+  for (const k of NUMS) $(k).value = DEF[k];
+  readParams();
+  rebuild(false);
+});
+
+$('first').addEventListener('click', () => go(0));
+$('back').addEventListener('click', () => go(state.step - 1));
+$('next').addEventListener('click', () => go(state.step + 1));
+$('last').addEventListener('click', () => go(steps.length - 1));
+$('play').addEventListener('click', () => setPlaying(!state.playing));
+$('scrub').addEventListener('input', e => go(+e.target.value));
+document.querySelectorAll('.ph').forEach(b => b.addEventListener('click', () => {
+  const s = steps.findIndex(x => x.phase === b.dataset.ph);
+  if (s >= 0) go(s);
+}));
+$('mode').addEventListener('change', e => { setPlaying(false); state.mode = e.target.value === 'cell' ? 'cell' : 'value'; rebuild(true); });
+$('speed').addEventListener('change', e => { state.speed = +e.target.value || 700; if (state.playing) setPlaying(true); });
+
+$('cols').addEventListener('click', e => {
+  const td = e.target.closest('td.c');
+  if (td) go(stepFor(td.dataset.k, +td.dataset.i, +td.dataset.j));
+});
+
+document.addEventListener('keydown', e => {
+  if (e.altKey || e.ctrlKey || e.metaKey) return;
+  const tag = e.target.tagName;
+  if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;
+  if (e.key === 'ArrowRight') go(state.step + 1);
+  else if (e.key === 'ArrowLeft') go(state.step - 1);
+  else if (e.key === 'Home') go(0);
+  else if (e.key === 'End') go(steps.length - 1);
+  else if (e.key === ' ' && tag !== 'BUTTON') setPlaying(!state.playing);
+  else return;
+  e.preventDefault();
+});
+
+state.mode = $('mode').value === 'cell' ? 'cell' : 'value';
+state.speed = +$('speed').value || 700;
+readParams();
+rebuild(false);
+})();
+</script>
+
+</body></html>
