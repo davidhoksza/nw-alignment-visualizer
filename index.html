@@ -63,9 +63,11 @@ body { background: var(--bg); color: var(--ink); font: 14px/1.5 var(--sans); }
 b.kG, b.kH, b.kV { font-weight: 600; }
 
 /* header */
-.head { display: flex; flex-direction: column; gap: 4px; }
-h1 { margin: 0; font: 600 28px/1.15 var(--cond); text-wrap: balance; }
+.head { display: flex; flex-direction: column; gap: 4px; position: relative; }
+h1 { margin: 0; font: 600 28px/1.15 var(--cond); text-wrap: balance; padding-right: 110px; }
 .head p { margin: 0; color: var(--ink-2); max-width: 78ch; }
+.head .gh { position: absolute; top: 2px; right: 0; font: 500 12.5px var(--sans); color: var(--ink-2); text-decoration: none; border-bottom: 1px solid var(--line-2); }
+.head .gh:hover { color: var(--ink); border-color: var(--ink-2); }
 
 /* parameters */
 .params { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px 24px; }
@@ -189,6 +191,7 @@ kbd { font: 500 11.5px/1.4 var(--mono); border: 1px solid var(--line-2); border-
 
 <div class="app">
   <header class="head">
+    <a class="gh" href="https://github.com/davidhoksza/nw-alignment-visualizer" target="_blank" rel="noopener">View on GitHub</a>
     <h1>Global alignment with affine gaps</h1>
     <p>Needleman–Wunsch with three matrices. <b class="kG">G</b> holds the best score for each pair of prefixes, <b class="kH">H</b> the best that ends with a horizontal move (a letter of S1 faces a gap) and <b class="kV">V</b> the best that ends with a vertical move (a letter of S2 faces a gap). Step through the fill and the traceback and watch where every value comes from.</p>
   </header>
